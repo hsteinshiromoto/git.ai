@@ -7,7 +7,13 @@ import subprocess
 import sys
 from collections import defaultdict
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
+
+# Import code_quality module for quality evaluation
+try:
+    from . import code_quality
+except ImportError:
+    import code_quality
 
 
 def run_git_command(command: List[str]) -> str:
@@ -364,12 +370,100 @@ def generate_changelog(branch_name: str, commits: List[Dict], output_file: str) 
             f.write("\n")
 
 
+def analyze_code_quality(commits: List[Dict]) -> Dict[str, Any]:
+    """Analyze code quality metrics for Python files in a branch.
+    
+    This function extracts all Python files from the commit history,
+    evaluates their code quality using the code_quality module,
+    and returns the results.
+    
+    Args:
+        commits: A list of commit dictionaries from the branch.
+        
+    Returns:
+        A dictionary with file paths as keys and quality metrics as values.
+        
+    Examples:
+        >>> # This doctest is skipped as it requires actual files
+        >>> # sample_commits = [
+        >>> #     {'changes': [{'type': 'A', 'path': 'test.py'}]}
+        >>> # ]
+        >>> # results = analyze_code_quality(sample_commits)
+    """
+    # Get all Python files that were added or modified
+    python_files = set()
+    
+    for commit in commits:
+        for change in commit["changes"]:
+            # Only consider added or modified files
+            if change["type"] in ["A", "M", "R"]:
+                file_path = change["path"]
+                # Only analyze Python files
+                if file_path.endswith(".py") and os.path.exists(file_path):
+                    python_files.add(file_path)
+    
+    # Evaluate each file
+    evaluations = []
+    for file_path in python_files:
+        try:
+            result = code_quality.evaluate_python_file(file_path)
+            evaluations.append(result)
+        except Exception as e:
+            print(f"Error evaluating {file_path}: {e}", file=sys.stderr)
+    
+    return evaluations
+
+
+def generate_quality_report(branch_name: str, commits: List[Dict], output_file: str) -> None:
+    """Generate a code quality report for Python files in a branch.
+    
+    This function analyzes the code quality of Python files in a branch
+    and generates a markdown report with the results.
+    
+    Args:
+        branch_name: The name of the git branch to analyze.
+        commits: A list of commit dictionaries from the branch.
+        output_file: The path where the report file should be written.
+        
+    Returns:
+        None
+        
+    Examples:
+        >>> # This doctest is skipped as it requires actual files
+        >>> # import tempfile
+        >>> # with tempfile.NamedTemporaryFile(delete=False) as temp:
+        >>> #     temp_path = temp.name
+        >>> # sample_commits = [{'changes': [{'type': 'A', 'path': 'test.py'}]}]
+        >>> # generate_quality_report('test', sample_commits, temp_path)
+        >>> # os.unlink(temp_path)
+    """
+    # Analyze code quality
+    evaluations = analyze_code_quality(commits)
+    
+    if not evaluations:
+        with open(output_file, "w") as f:
+            f.write(f"# Code Quality Report for {branch_name}\n\n")
+            f.write("No Python files found for analysis.")
+        return
+    
+    # Format the report
+    report = code_quality.format_quality_report(evaluations)
+    
+    # Write the report to file
+    with open(output_file, "w") as f:
+        f.write(f"# Code Quality Report for {branch_name}\n\n")
+        f.write(report)
+        
+    return
+
+
 def main() -> None:
     """Main function that parses command line arguments and processes git branches.
 
     This function serves as the entry point for the git summarizer tool.
     It parses command line arguments, determines which branches to process,
-    generates summaries for each branch, and optionally creates changelog files.
+    generates summaries for each branch, and optionally creates changelog files
+    and code quality reports.
 
     Returns:
         None
@@ -387,9 +481,12 @@ def main() -> None:
         "--changelog", "-c", help="Generate a changelog file", action="store_true"
     )
     parser.add_argument(
+        "--quality", "-q", help="Generate a code quality report", action="store_true"
+    )
+    parser.add_argument(
         "--output",
         "-o",
-        help="Output directory for changelog files (default: current directory)",
+        help="Output directory for generated files (default: current directory)",
         default=".",
     )
 
@@ -413,6 +510,12 @@ def main() -> None:
             output_file = os.path.join(args.output, f"changelog_{branch}.md")
             generate_changelog(branch, commits, output_file)
             print(f"Changelog generated: {output_file}")
+            
+        # Generate code quality report if requested
+        if args.quality:
+            output_file = os.path.join(args.output, f"quality_{branch}.md")
+            generate_quality_report(branch, commits, output_file)
+            print(f"Code quality report generated: {output_file}")
 
 
 if __name__ == "__main__":
