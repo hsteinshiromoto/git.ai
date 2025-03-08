@@ -457,6 +457,63 @@ def generate_quality_report(branch_name: str, commits: List[Dict], output_file: 
     return
 
 
+def analyze_specific_files(file_paths: List[str], output_dir: str, generate_changelog: bool = False, generate_quality: bool = True) -> None:
+    """Analyze specific files or directories without requiring a git repository.
+    
+    Args:
+        file_paths: List of file or directory paths to analyze
+        output_dir: Directory where reports should be saved
+        generate_changelog: Whether to generate a changelog (not applicable for direct file analysis)
+        generate_quality: Whether to generate a code quality report
+    
+    Returns:
+        None
+    """
+    if not file_paths:
+        print("No files or directories specified.")
+        return
+    
+    # For direct file analysis, if no flags are specified, default to quality reports
+    if not generate_changelog and not generate_quality:
+        generate_quality = True
+        
+    for path in file_paths:
+        # Use the filename as the report base name
+        base_name = os.path.basename(path)
+        
+        if not os.path.exists(path):
+            print(f"Error: {path} does not exist.")
+            continue
+            
+        if generate_quality:
+            if os.path.isdir(path):
+                evaluations = code_quality.evaluate_directory(path)
+                output_file = os.path.join(output_dir, f"quality_{base_name}.md")
+                
+                with open(output_file, "w") as f:
+                    f.write(f"# Code Quality Report for {base_name}\n\n")
+                    f.write(code_quality.format_quality_report(evaluations))
+                
+                print(f"Code quality report generated: {output_file}")
+            elif path.endswith('.py'):
+                # Single Python file
+                evaluation = code_quality.evaluate_python_file(path)
+                output_file = os.path.join(output_dir, f"quality_{base_name}.md")
+                
+                with open(output_file, "w") as f:
+                    f.write(f"# Code Quality Report for {base_name}\n\n")
+                    f.write(code_quality.format_quality_report([evaluation]))
+                
+                print(f"Code quality report generated: {output_file}")
+            else:
+                print(f"Skipping {path} - not a Python file or directory.")
+                
+        if generate_changelog:
+            # For direct file analysis, changelogs don't make much sense without git history
+            print(f"Note: Changelog generation (-c flag) only makes sense in git repository mode.")
+            print(f"      Use without file paths to generate changelogs for branches.")
+
+
 def main() -> None:
     """Main function that parses command line arguments and processes git branches.
 
@@ -489,33 +546,53 @@ def main() -> None:
         help="Output directory for generated files (default: current directory)",
         default=".",
     )
+    parser.add_argument(
+        "paths", 
+        nargs="*",
+        help="Optional file or directory paths to analyze directly (bypasses git analysis)",
+    )
 
     args = parser.parse_args()
+    
+    # If specific files or directories are provided, analyze them directly
+    if args.paths:
+        analyze_specific_files(args.paths, args.output, args.changelog, args.quality)
+        return
 
-    # Determine which branches to process
-    if args.branch:
-        branches = [args.branch]
-    else:
-        branches = get_branches()
+    # Otherwise, perform git repository analysis
+    try:
+        # Determine which branches to process
+        if args.branch:
+            branches = [args.branch]
+        else:
+            branches = get_branches()
 
-    # Process each branch
-    for branch in branches:
-        commits = get_commit_history(branch)
-        summary = generate_summary(branch, commits)
-        print(summary)
-        print("\n" + "-" * 50 + "\n")
+        # Process each branch
+        for branch in branches:
+            commits = get_commit_history(branch)
+            summary = generate_summary(branch, commits)
+            print(summary)
+            print("\n" + "-" * 50 + "\n")
 
-        # Generate changelog if requested
-        if args.changelog:
-            output_file = os.path.join(args.output, f"changelog_{branch}.md")
-            generate_changelog(branch, commits, output_file)
-            print(f"Changelog generated: {output_file}")
-            
-        # Generate code quality report if requested
-        if args.quality:
-            output_file = os.path.join(args.output, f"quality_{branch}.md")
-            generate_quality_report(branch, commits, output_file)
-            print(f"Code quality report generated: {output_file}")
+            # Generate changelog if requested
+            if args.changelog:
+                output_file = os.path.join(args.output, f"changelog_{branch}.md")
+                generate_changelog(branch, commits, output_file)
+                print(f"Changelog generated: {output_file}")
+                
+            # Generate code quality report if requested
+            if args.quality:
+                output_file = os.path.join(args.output, f"quality_{branch}.md")
+                generate_quality_report(branch, commits, output_file)
+                print(f"Code quality report generated: {output_file}")
+    except subprocess.CalledProcessError:
+        # If git commands fail (e.g., not in a git repository), 
+        # and paths were provided, analyze them directly
+        if args.paths:
+            analyze_specific_files(args.paths, args.output, args.changelog, args.quality)
+        else:
+            print("Error: Not in a git repository and no files specified for analysis.")
+            sys.exit(1)
 
 
 if __name__ == "__main__":
